@@ -1,4 +1,8 @@
-# Sprint 0 Checklist — Before You Write Code
+# Sprint 0 Checklist — ✅ COMPLETE (March 5, 2026)
+
+> **Sprint 0 is done.** All infrastructure is live. The nightly pipeline runs automatically at 2am ET.
+> First confirmed run: 4 ideas written to Supabase, 4 evaluations scored (WATCH 55/100). No BUILD ideas yet.
+> **Next work is Sprint 1 — see bottom of this file.**
 
 ## Quick Reference
 ```
@@ -103,3 +107,18 @@ npm run pipeline
 ## Already Done
 - [x] GitHub account (personal)
 - [x] Vercel account
+
+---
+
+## Sprint 1 — Improve Signal Quality
+
+**Goal:** Get the pipeline producing at least one `BUILD`-worthy idea (score ≥ 65).
+
+Priority order:
+
+1. **Fix Reddit RSS fetch** — `studio/agents/scout/sources/reddit.ts` currently fails silently. Debug why and restore it as a data source.
+2. **Add more targeted sources** — `studio/config/sources.json` has generic feeds. Add niche RSS feeds (Indie Hackers, specific subreddits via RSS) that surface stronger business signals.
+3. **Tune evaluator scoring** — `studio/agents/evaluator/index.ts` uses rule-based scoring. Understand why ideas max out at 55/100 and adjust weights or keyword signals in `studio/config/scoring_weights.json`.
+4. **Add LLM scoring pass** — Once rule-based scoring is understood, add a GitHub Models LLM call to the evaluator for ideas that score 45–64 to see if they deserve a higher score.
+
+Done when: `npm run pipeline` produces at least one idea with recommendation `BUILD` and a row appears in the `projects` table.
