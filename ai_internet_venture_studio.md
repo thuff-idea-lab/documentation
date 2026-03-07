@@ -22,6 +22,12 @@ Supports **any internet business asset** (websites, directories, SaaS, YouTube c
 - The full pipeline is: Scout → Evaluate → **Board** → Plan → Build → Test → Scale/Kill.
 - Keep everything deterministic + testable: agents should be small scripts with clear inputs/outputs.
 
+### Portfolio heuristic
+- Default bias: find **base hits** — ideas that are easy to build, easy to plan, easy to validate, and plausibly monetizable with low ongoing operational burden.
+- Allow **homeruns** when the signal is unusually strong, the pain is clear, and the path to monetization/distribution is concrete.
+- Reject the middle zone: ideas that are neither easy base hits nor exceptional upside opportunities.
+- Optimize agent outputs for **builder-ready context**, not just clever idea titles. A good idea must include enough specificity that downstream Planner/Builder agents can execute with minimal guesswork.
+
 ---
 
 ## 1) Folder structure
@@ -115,7 +121,7 @@ venture-studio/
 
     lib/
       llm.ts                   # GitHub Models/local routing (see docs/AI_STRATEGY.md)
-      db.ts                    # Prisma client
+      db.ts                    # DB client (currently Supabase)
       logger.ts
       validate.ts              # JSON schema validation
       urls.ts
@@ -183,7 +189,22 @@ venture-studio/
 - ✅ Scout Agent (discover)
 - ✅ Evaluator Agent (score)
 - ✅ Planner Agent (choose project type + draft build plan)
-- ✅ Dashboard (simple table view)
+- ⏳ Dashboard (simple table view + human approval gate)
+
+### Current repo status
+- ✅ Scout is implemented and actively sourcing ideas from multiple lanes.
+- ✅ Evaluator is implemented and aligned to the current portfolio heuristic.
+- ✅ Planner is implemented and producing builder-ready project plans.
+- ✅ Dashboard is implemented as the review queue and temporary human approval gate.
+- ✅ Human approval gate is implemented through dashboard-managed project statuses.
+- ⏳ Builder agent is the current implementation focus.
+- ⏳ Board and Observatory are not built yet.
+
+### Immediate operating model
+- Treat the dashboard as the temporary approval gate before Builder exists.
+- Current flow in code: Scout → Evaluator → Planner.
+- Near-term desired flow: Scout → Evaluator → Planner → Human review dashboard → Builder.
+- Later target flow: Scout → Evaluator → Board → Planner → Human review dashboard → Builder.
 
 ### Phase 2 (Next)
 - Builder Agent (generate MVP scaffold in `/projects/active/<slug>`)
@@ -214,7 +235,7 @@ venture-studio/
 - `Evaluation`
   - `id`, `ideaId`, `scoreTotal`, `scoreBreakdown(json)`, `recommendation` (DROP | WATCH | BUILD), `notes`, `createdAt`
 - `Project`
-  - `id`, `ideaId`, `slug`, `projectType`, `status` (PLANNED | BUILDING | LIVE | PAUSED | ARCHIVED), `plan(json)`, `createdAt`
+  - `id`, `ideaId`, `slug`, `projectType`, `status` (PLANNED | APPROVED | BUILDING | LIVE | PAUSED | KILLED | ARCHIVED), `priority`, `decisionNotes`, `approvedAt`, `killedAt`, `buildStartedAt`, `buildFinishedAt`, `lastBuildError`, `plan(json)`, `createdAt`
 - `MVP`
   - `id`, `projectId`, `spec(json)`, `repoPath`, `deployTarget`, `createdAt`
 - `Experiment`
@@ -313,12 +334,40 @@ Everything an agent outputs must be stored as structured JSON in DB **and** opti
     "risks": ["string"],
     "constraints": ["string"]
   },
+  "executionContext": {
+    "trigger": "string",
+    "coreInputs": ["string"],
+    "coreOutputs": ["string"],
+    "mustHaveV1Features": ["string"],
+    "outOfScopeForV1": ["string"],
+    "suggestedIntegrations": ["string"],
+    "operationalNotes": ["string"]
+  },
   "testPlan": {
     "channels": ["REDDIT","X","ADS","EMAIL","SEO"],
     "budget": 0,
     "tracking": ["string"],
     "goNoGo": ["string"]
   }
+}
+```
+
+### 4.5 MVP build artifact contract (`MVPBuildRecord`)
+```json
+{
+  "projectSlug": "string",
+  "projectType": "website|directory|saas",
+  "status": "BUILDING|PAUSED",
+  "template": "nextjs-studio-v1",
+  "generatedAppPath": "projects/active/<slug>/build",
+  "artifacts": ["README.md", "app/page.tsx", "package.json"],
+  "validation": {
+    "installCommand": "npm install",
+    "buildCommand": "npm run build",
+    "buildPassed": true,
+    "notes": ["string"]
+  },
+  "generatedAt": "ISO-8601 string"
 }
 ```
 
@@ -405,21 +454,83 @@ The **studio dashboard** is the control center; each project lives in `/projects
 2) Add Prisma schema + migrations
 3) Add `studio/lib/db.ts`
 
+Current status:
+- Mostly done.
+- The live repo currently uses Supabase directly in `studio/lib/db.ts` rather than a Prisma client.
+
 ### Step 2 — Scout Agent (MVP)
 - Start with 1–2 sources (e.g., Reddit RSS + Google Trends)
 - Output `IdeaRecord` entries
+
+Current status:
+- Done and materially expanded beyond the original MVP.
 
 ### Step 3 — Evaluator Agent
 - Read new Ideas from DB
 - Produce Evaluation records
 
+Current status:
+- Done.
+
 ### Step 4 — Planner Agent
-- For `GO` board verdicts, generate `ProjectRecord`
+- For `BUILD` ideas now, and later for `GO` board verdicts, generate `ProjectRecord`
 - Create `/projects/active/<slug>/project.json`
 
-### Step 5 — Dashboard
-- Show ideas, scores, board decisions, projects
-- Add "Approve" / "Archive" buttons
+Current status:
+- Done.
+- Planner currently writes planned projects directly without a human approval gate.
+
+### Step 5 — Dashboard + Human Review Gate
+- Show planned projects with joined idea + evaluation context
+- Add `Approve` / `Kill` actions on projects
+- Make Builder consume only approved projects
+- Treat this as the temporary decision gate until Board exists
+
+Current status:
+- Not started.
+- This is the next logical build step.
+
+MVP dashboard requirements:
+- Views for `PLANNED`, `APPROVED`, `BUILDING`, and `KILLED` projects.
+- Show project plan, idea summary, evaluation notes, and source URLs so a human can inspect the original thread or listing.
+- Allow setting a numeric or ordinal priority on approved projects.
+- `KILLED` should behave as mostly permanent, but remain visible in an archive view for later review.
+- Builder should not start every approved project at once. It should claim work from the approved queue by priority with an explicit concurrency limit.
+- End-state goal: Builder automatically pulls from the approved queue without requiring manual "start build" clicks.
+
+Recommended status semantics:
+- `PLANNED`: waiting for human review.
+- `APPROVED`: approved for build queue, but not yet claimed by Builder.
+- `BUILDING`: Builder has claimed the project and is actively working on it.
+- `LIVE`: build completed and project is deployed or otherwise active.
+- `PAUSED`: needs human review before build resumes.
+- `KILLED`: rejected from the active portfolio, but still visible in archive/history.
+
+Recommended dashboard actions:
+- From `PLANNED`: `Approve`, `Kill`.
+- From `APPROVED`: update priority, move back to `PLANNED`, or `Kill`.
+- From `BUILDING`: view progress and optionally `Pause`.
+- From `KILLED`: view archive details and optionally restore to `PLANNED`.
+
+Recommended Builder queue behavior:
+- Builder should only read from `APPROVED` projects.
+- Builder should claim one project at a time by highest priority first, with a configurable concurrency limit.
+- Claiming work must atomically change a project from `APPROVED` to `BUILDING`.
+- For MVP, default Builder concurrency should be `1`.
+- If a build fails, prefer moving the project to `PAUSED` with `lastBuildError` populated.
+
+### Step 6 — Builder Agent (v1)
+- Only support `saas`, `directory`, and `website` project types for the first version.
+- Claim work from `APPROVED` projects by priority with concurrency `1`.
+- Allow a manual debug override by project slug for the first build iterations.
+- Generate code into `projects/active/<slug>/build` so the studio repo remains the control plane.
+- Use a single Next.js template family with small variants instead of free-form app generation.
+- Validate each generated app by running dependency install and production build.
+- On success, move the project to `PAUSED` for human review of the generated MVP.
+- On failure, move the project to `PAUSED` and write `lastBuildError` plus a build report.
+
+Current status:
+- In progress.
 
 ### Step 6 — Board of Agents (Phase 2)
 - Implement `studio/agents/board/` with CEO, CMO, COO, CFO personas
@@ -442,7 +553,11 @@ The **studio dashboard** is the control center; each project lives in `/projects
 ## 10) Quality guardrails
 - Every agent output must validate against its JSON schema.
 - Prefer deterministic templates over “free-form” generation.
-- Log minimally; store raw outputs for debugging.- **Board agents must be grounded in DB data** — no persona reasoning without real numbers (actual scores, benchmarks, prior outcomes). Without this, the board is just expensive creative writing.
+- Log minimally; store raw outputs for debugging.
+- **Human review must gate building** until Board and Builder are implemented. `PLANNED` projects should not auto-progress into build execution.
+- **Builder v1 must stay narrow** — it should scaffold only a small set of supported web project types and fail clearly on unsupported plans.
+- **Builder output must be isolated per project** in `projects/active/<slug>/build` so winners can be spun out into their own repos later.
+- **Board agents must be grounded in DB data** — no persona reasoning without real numbers (actual scores, benchmarks, prior outcomes). Without this, the board is just expensive creative writing.
 - **Observatory never self-modifies** — it surfaces suggestions only. A human must approve and apply any prompt changes. Autonomous self-modification is explicitly out of scope.
 - **Board personas must be constrained** — each persona's system prompt is scoped to its domain only. If all four agents can see all dimensions, they converge to agreement (LLM confirmation bias × 4).
 ---
@@ -453,7 +568,8 @@ You are done with Phase 1 when:
 - New ideas appear daily
 - They get scored
 - A few become planned projects with a clear MVP + test plan
-- You can review everything in the dashboard
+- You can review planned projects in the dashboard
+- You can explicitly approve or kill projects before any build step begins
 
 ---
 
